@@ -2,17 +2,17 @@
 
 A tiny personal PWA that shuttles PDF/DOCX files between a Windows desktop and an Android tablet over WebRTC — no cloud storage, no accounts. Drop a file on the desktop, open it in Word/Acrobat/any editor on the tablet, mark it up, and share it straight back to the desktop. See [design-doc.md](design-doc.md) for the full architecture.
 
-Everything lives in [`app/`](app/) — plain HTML/JS, no build step.
+Everything lives in [`docs/`](docs/) — plain HTML/JS, no build step.
 
 ## Hosting (one-time)
 
 The app must be served over **HTTPS** (service workers and PWA install require it). The easiest option is GitHub Pages:
 
-1. Push the contents of `app/` to a repo (e.g. as the repo root or a `docs/` folder).
-2. Enable GitHub Pages for that repo.
+1. Push this project to a GitHub repo (the app already lives in `docs/`, which GitHub Pages can serve directly).
+2. Enable GitHub Pages for the repo: *Settings → Pages → Deploy from a branch → `main` / `docs`*.
 3. Open the published URL on both devices.
 
-Any static host works (Netlify, Cloudflare Pages, etc.). Document data never touches the host — it only serves the app files. The WebRTC handshake uses the free public PeerJS broker; if it ever feels flaky, self-host [peerjs-server](https://github.com/peers/peerjs-server) and add `{ host, port, path }` to the `new Peer(...)` options in `app/js/transfer.js`.
+Any static host works (Netlify, Cloudflare Pages, etc.). Document data never touches the host — it only serves the app files. The WebRTC handshake uses the free public PeerJS broker; if it ever feels flaky, self-host [peerjs-server](https://github.com/peers/peerjs-server) and add `{ host, port, path }` to the `new Peer(...)` options in `docs/js/transfer.js`.
 
 ## Setup (one-time)
 
@@ -37,3 +37,7 @@ Any static host works (Netlify, Cloudflare Pages, etc.). Document data never tou
 - The share sheet ("Open in…") requires one tap — browsers don't allow it to open automatically.
 - "Reset pairing" at the bottom of either app un-pairs without deleting queued files.
 - Security model: each device only accepts connections from its one paired peer ID. Anyone who learns your peer IDs could attempt to connect, so don't publish them.
+
+## License
+
+[Apache 2.0](LICENSE)

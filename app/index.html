@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#2563eb">
+  <title>Tablet Passthrough</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header>
+    <h1>⇄ Tablet Passthrough</h1>
+    <div id="status"><span id="status-dot" class="dot wait"></span><span id="status-text">Starting…</span></div>
+  </header>
+
+  <main>
+    <!-- First run: pick a role -->
+    <section id="role-chooser" hidden>
+      <h2>Which device is this?</h2>
+      <div class="role-buttons">
+        <button id="choose-desktop" class="big">🖥️ Desktop<small>Sends documents out, receives them back</small></button>
+        <button id="choose-tablet" class="big">📱 Tablet<small>Receives documents to mark up</small></button>
+      </div>
+    </section>
+
+    <!-- Desktop, unpaired: show QR -->
+    <section id="desktop-pair" hidden>
+      <h2>Pair your tablet (one time)</h2>
+      <p>On the tablet, scan this QR code with the camera app and open the link. Or open this site on the tablet, choose “Tablet”, and type the code below.</p>
+      <div id="qr-holder"></div>
+      <p class="code" id="pair-code-display"></p>
+      <p class="muted" id="pair-url-display"></p>
+      <div id="trust-prompt" class="trust" hidden>
+        <p>Trust this device? <strong id="trust-id"></strong></p>
+        <button id="trust-yes" class="primary">Trust</button>
+        <button id="trust-no" class="ghost">Reject</button>
+      </div>
+    </section>
+
+    <!-- Tablet, manual code entry -->
+    <section id="tablet-pair" hidden>
+      <h2>Enter pairing code</h2>
+      <p>Type the code shown on your desktop’s screen.</p>
+      <form id="pair-code-form">
+        <input id="pair-code-input" placeholder="atp-…" autocomplete="off" autocapitalize="none" spellcheck="false">
+        <button type="submit" class="primary">Pair</button>
+      </form>
+      <p class="err-text" id="pair-code-error"></p>
+    </section>
+
+    <!-- Tablet, waiting for desktop confirmation -->
+    <section id="tablet-pairing-wait" hidden>
+      <h2>Pairing…</h2>
+      <p>Connecting to <strong id="pairing-target"></strong>. Confirm the pairing on your desktop screen.</p>
+    </section>
+
+    <!-- Desktop main -->
+    <section id="desktop-main" hidden>
+      <div id="drop-zone">
+        <p><strong>Drop a PDF or DOCX here</strong> to send it to your tablet</p>
+        <label class="ghost file-label">or browse… <input type="file" id="file-input" accept=".pdf,.docx" multiple hidden></label>
+      </div>
+      <div class="folder-row">
+        <button id="choose-folder" class="ghost">📁 Choose save folder</button>
+        <span id="folder-label" class="muted"></span>
+      </div>
+      <h2>Queued for tablet</h2>
+      <ul id="outbox-list" class="file-list"></ul>
+      <p id="outbox-empty" class="muted">Nothing queued. Files wait here until the tablet connects.</p>
+      <h2>Returned from tablet</h2>
+      <ul id="inbox-list" class="file-list"></ul>
+      <p id="inbox-empty" class="muted">Nothing yet. Share a file back from the tablet and it lands here.</p>
+      <p class="muted footer-note">This device: <span id="my-code" class="inline-code"></span> · <a href="#" id="reset-link">reset pairing</a></p>
+    </section>
+
+    <!-- Tablet main -->
+    <section id="tablet-main" hidden>
+      <h2>Received documents</h2>
+      <ul id="inbox-list-t" class="file-list"></ul>
+      <p id="inbox-empty-t" class="muted">Nothing yet. Drop a file on the desktop app and it appears here.</p>
+      <p class="muted">Tap <strong>Open in…</strong> to hand a file to Word, Acrobat, or your editor. When you’re done, use that app’s <strong>Share</strong> button and pick this app to send it back.</p>
+      <h2>Returning to desktop</h2>
+      <ul id="outbox-list-t" class="file-list"></ul>
+      <p id="outbox-empty-t" class="muted">Nothing waiting. Shared files queue here until the desktop is reachable.</p>
+      <p class="muted footer-note"><a href="#" id="reset-link-t">reset pairing</a></p>
+    </section>
+  </main>
+
+  <script src="vendor/peerjs.min.js"></script>
+  <script src="vendor/qrcode.js"></script>
+  <script src="js/db.js"></script>
+  <script src="js/transfer.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

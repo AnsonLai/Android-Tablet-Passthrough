@@ -3,7 +3,7 @@
    so a marked-up document is never lost even if the app closes. */
 importScripts('js/db.js');
 
-const CACHE = 'atp-v1';
+const CACHE = 'atp-v2';
 const SHELL = [
   './',
   'index.html',
@@ -58,6 +58,8 @@ async function handleShareTarget(event) {
   try {
     const formData = await event.request.formData();
     const files = formData.getAll('file');
+    // Shared files go to whichever peer is currently selected in the app.
+    const target = await self.ATPDB.kvGet('activePeer') || null;
     for (const file of files) {
       if (!(file instanceof File)) continue;
       await self.ATPDB.add('outbox', {
@@ -66,6 +68,7 @@ async function handleShareTarget(event) {
         mime: file.type || 'application/octet-stream',
         size: file.size,
         blob: file,
+        target,
         addedAt: Date.now(),
       });
     }

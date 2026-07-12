@@ -13,7 +13,11 @@
 <body>
   <header>
     <h1>⇄ Tablet Passthrough</h1>
-    <div id="status"><span id="status-dot" class="dot wait"></span><span id="status-text">Starting…</span></div>
+    <button id="status" title="Manage paired devices"><span id="status-dot" class="dot wait"></span><span id="status-text">Starting…</span></button>
+    <div id="peer-menu" class="menu" hidden>
+      <ul id="peer-menu-list"></ul>
+      <button id="add-device" class="ghost">＋ Add / re-pair device</button>
+    </div>
   </header>
 
   <main>
@@ -26,35 +30,40 @@
       </div>
     </section>
 
-    <!-- Desktop, unpaired: show QR -->
+    <!-- Desktop: show QR for a device to pair with -->
     <section id="desktop-pair" hidden>
-      <h2>Pair your tablet (one time)</h2>
-      <p>On the tablet, scan this QR code with the camera app and open the link. Or open this site on the tablet, choose “Tablet”, and type the code below.</p>
+      <h2>Pair a device (one time)</h2>
+      <p>On the other device, scan this QR code with the camera app and open the link. Or open this site there, choose its role, and type the code below.</p>
       <div id="qr-holder"></div>
       <p class="code" id="pair-code-display"></p>
       <p class="muted" id="pair-url-display"></p>
       <div id="trust-prompt" class="trust" hidden>
         <p>Trust this device? <strong id="trust-id"></strong></p>
-        <button id="trust-yes" class="primary">Trust</button>
-        <button id="trust-no" class="ghost">Reject</button>
+        <input id="trust-name" placeholder="Name it (e.g. Tablet)" autocomplete="off">
+        <div>
+          <button id="trust-yes" class="primary">Trust</button>
+          <button id="trust-no" class="ghost">Reject</button>
+        </div>
       </div>
+      <p><button id="pair-back-d" class="ghost" hidden>← Back</button></p>
     </section>
 
     <!-- Tablet, manual code entry -->
     <section id="tablet-pair" hidden>
       <h2>Enter pairing code</h2>
-      <p>Type the code shown on your desktop’s screen.</p>
+      <p>Type the code shown on the other device’s screen.</p>
       <form id="pair-code-form">
         <input id="pair-code-input" placeholder="atp-…" autocomplete="off" autocapitalize="none" spellcheck="false">
         <button type="submit" class="primary">Pair</button>
       </form>
       <p class="err-text" id="pair-code-error"></p>
+      <p><button id="pair-back-t" class="ghost" hidden>← Back</button></p>
     </section>
 
-    <!-- Tablet, waiting for desktop confirmation -->
+    <!-- Tablet, waiting for the other side's confirmation -->
     <section id="tablet-pairing-wait" hidden>
       <h2>Pairing…</h2>
-      <p>Connecting to <strong id="pairing-target"></strong>. Confirm the pairing on your desktop screen.</p>
+      <p>Connecting to <strong id="pairing-target"></strong>. Confirm the pairing on the other device’s screen.</p>
     </section>
 
     <!-- Desktop main -->
@@ -67,12 +76,12 @@
         <button id="choose-folder" class="ghost">📁 Choose save folder</button>
         <span id="folder-label" class="muted"></span>
       </div>
-      <h2>Queued for tablet</h2>
+      <h2>Queued</h2>
       <ul id="outbox-list" class="file-list"></ul>
-      <p id="outbox-empty" class="muted">Nothing queued. Files wait here until the tablet connects.</p>
-      <h2>Returned from tablet</h2>
+      <p id="outbox-empty" class="muted">Nothing queued. Files wait here until their device connects.</p>
+      <h2>Returned</h2>
       <ul id="inbox-list" class="file-list"></ul>
-      <p id="inbox-empty" class="muted">Nothing yet. Share a file back from the tablet and it lands here.</p>
+      <p id="inbox-empty" class="muted">Nothing yet. Files shared back land here and save automatically.</p>
       <p class="muted footer-note">This device: <span id="my-code" class="inline-code"></span> · <a href="#" id="reset-link">reset pairing</a></p>
     </section>
 
@@ -88,6 +97,16 @@
       <p class="muted footer-note"><a href="#" id="reset-link-t">reset pairing</a></p>
     </section>
   </main>
+
+  <!-- Tablet: pops up when a file arrives; one tap opens the Android share card -->
+  <div id="share-overlay" class="overlay" hidden>
+    <div class="overlay-card">
+      <p class="muted">Document received</p>
+      <p class="overlay-name" id="overlay-name"></p>
+      <button id="overlay-open" class="primary overlay-open">Open in…</button>
+      <button id="overlay-close" class="ghost">Later</button>
+    </div>
+  </div>
 
   <script src="vendor/peerjs.min.js"></script>
   <script src="vendor/qrcode.js"></script>

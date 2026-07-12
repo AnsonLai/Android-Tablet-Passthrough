@@ -28,8 +28,10 @@ Any static host works (Netlify, Cloudflare Pages, etc.). Document data never tou
 
 ## Daily use
 
-- **Out:** drag a PDF/DOCX onto the desktop app. It queues (survives reboots) and transfers the moment the tablet app is opened. On the tablet, tap **Open in…** and pick Word, Acrobat, or your editor.
-- **Back:** in the editing app, tap **Share** and pick **Passthrough**. The file queues and lands in your desktop save folder as soon as the desktop app is reachable, with a `(1)` suffix if the name already exists.
+- **Out:** drag a PDF/DOCX onto the desktop app. It queues (survives reboots) and transfers the moment the tablet app is opened. The tablet pops up an **Open in…** card the instant it arrives — one tap opens the Android share sheet for Word, Acrobat, or your editor.
+- **Back:** in the editing app, tap **Share** and pick **Passthrough**. The file queues and saves automatically on the desktop as soon as it's reachable — into your chosen folder (with a `(1)` suffix on name collisions), or as a regular download if no folder is set.
+- **Multiple devices:** click the **status in the top-right** to open the device list (up to 8 paired devices). Click a device to make it the active target, ✎ to rename, ✕ to forget, or **＋ Add / re-pair device** to pair another computer or tablet. Queued files remember which device they're for.
+- While the page is visible, the connection is pinged every 30 seconds to keep it alive and reconnect automatically if it drops.
 
 ## Notes & limits
 

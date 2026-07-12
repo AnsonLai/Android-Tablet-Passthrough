@@ -4,7 +4,7 @@
     {
       "name": "passthrough",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["-y", "http-server", "app", "-p", "8123", "-c-1"],
+      "runtimeArgs": ["-y", "http-server", "docs", "-p", "8123", "-c-1"],
       "port": 8123
     }
   ]

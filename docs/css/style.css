@@ -200,3 +200,4 @@ button.mini { padding: 4px 8px; font-size: 0.8rem; }
 }
 .overlay-name { font-weight: 600; font-size: 1.05rem; margin: 0; word-break: break-all; }
 .overlay-open { padding: 16px; font-size: 1.1rem; }
+.overlay[hidden] { display: none; }

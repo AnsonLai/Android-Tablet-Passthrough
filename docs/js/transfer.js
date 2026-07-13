@@ -36,7 +36,31 @@
 
     start() {
       this.onStatus('connecting', 'Registering with signaling server…', null);
-      this.peer = new Peer(this.myId, { debug: 1 });
+      this.peer = new Peer(this.myId, {
+        debug: 1,
+        // Configure Open Relay STUN and TURN servers to allow connections across different networks (like mobile data on the tablet and home Wi-Fi on the PC), bypassing Carrier-Grade NAT (CGNAT) and firewalls without compromising security, since WebRTC data channels use end-to-end encryption (DTLS).
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:openrelay.metered.ca:80' },
+            {
+              urls: 'turn:openrelay.metered.ca:80',
+              username: 'openrelayproject',
+              credential: 'openrelayproject'
+            },
+            {
+              urls: 'turn:openrelay.metered.ca:443',
+              username: 'openrelayproject',
+              credential: 'openrelayproject'
+            },
+            {
+              urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+              username: 'openrelayproject',
+              credential: 'openrelayproject'
+            }
+          ]
+        }
+      });
 
       this.peer.on('open', () => {
         this.onStatus('online', 'Registered. Waiting for peer…', null);

@@ -445,7 +445,7 @@
       try {
         await navigator.share({ files: [file], title: record.name });
       } catch (e) {
-        // Si el sistema no permite compartir este archivo por restricciones de tipo (como sucede con docx en Android), forzamos la descarga local y actualizamos el estado del registro para notificar al usuario en la interfaz.
+        // If the system does not allow sharing this file due to type restrictions (as with docx on Android), we force a local download and update the record state to notify the user in the UI.
         if (e.name !== 'AbortError') {
           downloadRecord(record);
           record.saved = true;
@@ -456,7 +456,7 @@
       }
     } else {
       downloadRecord(record); // desktop browsers / no Web Share: plain download
-      // Actualizamos el estado a guardado y descargado para que el usuario tenga confirmación visual en el listado de archivos.
+      // Update the state to saved and downloaded so the user has visual confirmation in the file list.
       record.saved = true;
       record.downloaded = true;
       await db.update('inbox', record);
@@ -470,7 +470,7 @@
     a.style.display = 'none';
     a.href = url;
     a.download = record.name;
-    // En navegadores móviles como Chrome para Android, el elemento anchor debe estar agregado temporalmente al DOM del documento para que el evento click programático inicie con éxito la descarga de un recurso tipo blob.
+    // In mobile browsers like Chrome on Android, the anchor element must be temporarily appended to the document's DOM for the programmatic click event to successfully trigger the download of a blob resource.
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -480,7 +480,7 @@
   function showShareOverlay(record) {
     $('#overlay-name').textContent = record.name;
     $('#overlay-open').onclick = () => { $('#share-overlay').hidden = true; openInApp(record); };
-    // Permitimos la descarga directa desde el overlay para ofrecer una alternativa manual e inmediata si el usuario lo prefiere.
+    // Allow direct download from the overlay to offer an immediate manual alternative if preferred.
     $('#overlay-download').onclick = async () => {
       $('#share-overlay').hidden = true;
       downloadRecord(record);
@@ -558,7 +558,7 @@
       if (kind === 'inbox') {
         if (state.role === 'tablet') {
           actions.append(button('Open in…', 'primary', () => openInApp(record)));
-          // Añadimos un botón de descarga explícito en la tableta para cuando falle o no sea preferible usar el Web Share API.
+          // Add an explicit download button on the tablet for when the Web Share API fails or is not preferred.
           actions.append(button('Download', 'ghost', async () => {
             downloadRecord(record);
             record.saved = true;

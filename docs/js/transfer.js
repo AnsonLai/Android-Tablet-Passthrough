@@ -51,8 +51,14 @@
       });
 
       this.peer.on('error', (err) => {
-        // 'peer-unavailable' just means the other device isn't open right now.
-        if (err.type === 'peer-unavailable') return;
+        // 'peer-unavailable' just means the other device isn't registered yet.
+        // Drop the dead pending dial immediately so the next tick retries at
+        // once, instead of holding it until the stuck-timeout (which was
+        // adding 15+ s of dead air to first pairing).
+        if (err.type === 'peer-unavailable') {
+          if (this.conn && !this.conn.open) { try { this.conn.close(); } catch (e) {} this.conn = null; }
+          return;
+        }
         this.onStatus('error', err.type || String(err), null);
         // PeerJS destroys the Peer on fatal errors (e.g. 'unavailable-id' when
         // the broker still holds a ghost session after a quick reload).
@@ -90,24 +96,38 @@
     }
 
     dialNow() {
-      if (!this.targetId || this.conn || !this.peer || this.peer.disconnected) return;
+      // peer.open check matters: connect() before broker registration yields
+      // a dead connection object that never opens and never errors.
+      if (!this.targetId || this.conn || !this.peer || !this.peer.open) return;
       this.adoptConnection(this.peer.connect(this.targetId, { reliable: true }), false);
     }
 
     dialLoop() {
       this.dialNow();
       clearInterval(this.dialTimer);
-      this.dialTimer = setInterval(() => this.dialNow(), 5000);
+      this.dialTimer = setInterval(() => {
+        // Backstop for a dial that goes silent without a 'peer-unavailable'
+        // error: 6 s is well past LAN/WAN negotiation (1–3 s) but far below
+        // the old 15 s, so a missed first attempt costs seconds, not tens.
+        if (this.conn && !this.conn.open && Date.now() - this.connStartedAt > 6000) {
+          try { this.conn.close(); } catch (e) {}
+          this.conn = null;
+        }
+        this.dialNow();
+      }, 2000);
     }
 
     /* Called every 30 s by the app while the page is visible: keeps the data
        channel and NAT mappings warm, detects dead connections, redials. */
     keepalive(visible) {
-      if (!visible) return;
+      // Broker registration is maintained even while hidden — background-tab
+      // timer throttling starves PeerJS's heartbeat and the broker drops us,
+      // which made the desktop unreachable for pairing/transfers.
       if (this.peer && this.peer.destroyed) { this.restartSoon(); return; }
       if (this.peer && this.peer.disconnected) {
         try { this.peer.reconnect(); } catch (e) {}
       }
+      if (!visible) return;
       if (this.connOpen()) {
         if (Date.now() - this.lastAlive > PONG_STALE) {
           try { this.conn.close(); } catch (e) {}
@@ -127,18 +147,35 @@
         return;
       }
       if (this.conn) {
-        // Keep an open connection; on a simultaneous-dial tie with the same
-        // peer, the lower ID's outgoing attempt wins.
         const samePeer = this.conn.peer === conn.peer;
-        const keepExisting = this.conn.open || !isIncoming || (samePeer && this.myId < conn.peer);
-        if (keepExisting) { conn.close(); return; }
-        try { this.conn.close(); } catch (e) {}
+        if (samePeer && isIncoming && this.conn.open) {
+          // The remote redialed while we still hold an "open" link to it —
+          // it restarted (reload, app killed) and the old link is dead on its
+          // end even though WebRTC hasn't noticed yet. Take the fresh one.
+          try { this.conn.close(); } catch (e) {}
+        } else {
+          // Keep an open connection; on a simultaneous-dial tie with the same
+          // peer, the lower ID's outgoing attempt wins.
+          const keepExisting = this.conn.open || !isIncoming || (samePeer && this.myId < conn.peer);
+          if (keepExisting) { conn.close(); return; }
+          try { this.conn.close(); } catch (e) {}
+        }
       }
 
       this.conn = conn;
+      this.connStartedAt = Date.now();
       conn.on('open', () => {
         this.lastAlive = Date.now();
-        if (this.pendingPair === conn.peer) conn.send({ type: 'hello' });
+        if (this.pendingPair === conn.peer) {
+          // Repeat the introduction until the other side confirms — a single
+          // hello is lost if the peer's page is frozen or the link drops.
+          clearInterval(this.helloTimer);
+          this.helloTimer = setInterval(() => {
+            if (this.pendingPair !== conn.peer || !conn.open) { clearInterval(this.helloTimer); return; }
+            try { conn.send({ type: 'hello' }); } catch (e) {}
+          }, 4000);
+          try { conn.send({ type: 'hello' }); } catch (e) {}
+        }
         this.onStatus('connected', 'Peer connected', conn.peer);
         this.drain();
       });
@@ -163,12 +200,12 @@
           return;
         case 'hello': {
           if (this.isAllowed(conn.peer)) {
-            conn.send({ type: 'paired' }); // already trusted — re-confirm silently
+            try { conn.send({ type: 'paired' }); } catch (e) {} // already trusted — re-confirm silently
             return;
           }
           this.onPairRequest(conn.peer, (accepted) => {
             if (accepted) {
-              conn.send({ type: 'paired' });
+              try { conn.send({ type: 'paired' }); } catch (e) {}
               this.drain();
             } else {
               conn.close();
@@ -178,6 +215,7 @@
         }
         case 'paired':
           this.pendingPair = null;
+          clearInterval(this.helloTimer);
           this.onPaired && this.onPaired(conn.peer);
           return;
         case 'file-header':

@@ -88,6 +88,12 @@
 
     if (!state.role) return show('role-chooser');
     startApp();
+
+    // Resume an interrupted pairing attempt (e.g. Android killed the PWA
+    // before the other side confirmed).
+    const pending = await db.kvGet('pendingPair');
+    if (pending && !getPeer(pending)) beginPairingWith(pending);
+    else if (pending) await db.kvDelete('pendingPair');
   }
 
   function show(id) {
@@ -193,6 +199,7 @@
   function beginPairingWith(code) {
     if (getPeer(code)) { setActivePeer(code); backToMain(); return; }
     if (state.peers.length >= MAX_PEERS) { alert(`Limit of ${MAX_PEERS} paired devices reached. Forget one first.`); return; }
+    db.kvSet('pendingPair', code); // survives the app being killed mid-pairing
     $('#pairing-target').textContent = code;
     show('tablet-pairing-wait');
     state.transfer.pairWith(code);
@@ -201,19 +208,22 @@
   function handlePairRequest(remoteId, accept) {
     // Receiving side's one-time confirmation (shown on whichever device displayed the QR).
     if (state.peers.length >= MAX_PEERS) { accept(false); return; }
+    state.pendingAccept = accept; // hellos repeat every 4 s; always answer the latest
+    if (!$('#trust-prompt').hidden && $('#trust-id').textContent === remoteId) return; // don't wipe the name being typed
     $('#trust-id').textContent = remoteId;
     $('#trust-name').value = '';
     $('#trust-prompt').hidden = false;
     $('#trust-yes').onclick = async () => {
       $('#trust-prompt').hidden = true;
       await addPeer(remoteId, $('#trust-name').value.trim());
-      accept(true);
+      state.pendingAccept(true);
       backToMain();
     };
-    $('#trust-no').onclick = () => { $('#trust-prompt').hidden = true; accept(false); };
+    $('#trust-no').onclick = () => { $('#trust-prompt').hidden = true; state.pendingAccept(false); };
   }
 
   async function handlePaired(remoteId) {
+    await db.kvDelete('pendingPair');
     if (!getPeer(remoteId)) await addPeer(remoteId, '');
     backToMain();
   }
@@ -317,6 +327,11 @@
     $('#add-device').addEventListener('click', () => { closePeerMenu(); showPairingPanel(); });
     $('#pair-back-d').addEventListener('click', backToMain);
     $('#pair-back-t').addEventListener('click', backToMain);
+    $('#pair-cancel').addEventListener('click', async () => {
+      await db.kvDelete('pendingPair');
+      state.transfer.pendingPair = null;
+      backToMain();
+    });
 
     if (state.role === 'desktop') {
       const zone = $('#drop-zone');

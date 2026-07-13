@@ -23,7 +23,7 @@ Any static host works (Netlify, Cloudflare Pages, etc.). Document data never tou
 
 **Tablet (Android):**
 1. Scan the QR code on the desktop screen with the camera and open the link (or open the site, choose **Tablet**, and type the code).
-2. On the desktop, click **Trust** when prompted. Pairing is done — it never asks again.
+2. **Keep both screens on and the app visible on each** while pairing — Android freezes the app if the tablet screen sleeps, and the desktop must be open and registered. With both awake the connection is near-instant (well under a second); click **Trust** when the desktop prompts. Pairing is done — it never asks again. (If the tablet did sleep, just reopen the app; it resumes the attempt automatically, and you can hit **Cancel** on the pairing screen to back out.)
 3. In Chrome on the tablet, use **⋮ → Add to Home screen → Install** so the app appears in the Android share sheet.
 
 ## Daily use

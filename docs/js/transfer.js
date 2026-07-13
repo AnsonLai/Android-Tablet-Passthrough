@@ -69,17 +69,19 @@
       this.lastAlive = 0;
     }
 
-    async start() {
+    start() {
       this.onStatus('connecting', 'Registering with signaling server…', null);
-      // Fetched fresh on every (re)start: TURN credentials are short-lived,
-      // so a Peer that lives for days must not reuse old ones.
-      const iceServers = await fetchIceServers();
-      this.iceFetchedAt = Date.now();
+      // Start STUN-only: most connections are same-network and don't need a
+      // relay. TURN credentials are fetched on demand — see escalateToTurn() —
+      // only once a dial actually stalls, so the Worker/relay is never touched
+      // for a connection that direct STUN can already handle.
+      this.turnFetched = false;
+      this.escalatingTurn = false;
       this.peer = new Peer(this.myId, {
         debug: 1,
         // TURN relays the traffic but can't read it: WebRTC data channels are
         // end-to-end encrypted (DTLS).
-        config: { iceServers }
+        config: { iceServers: STUN_ONLY }
       });
 
       this.peer.on('open', () => {
@@ -108,6 +110,22 @@
         // the broker still holds a ghost session after a quick reload).
         // Re-register from scratch after a short wait.
         if (this.peer && this.peer.destroyed) this.restartSoon();
+      });
+    }
+
+    /* Called once a dial has stalled past the STUN-only backstop — a real
+       sign the direct path isn't working. Mutating peer.options.config is
+       enough: PeerJS reads it fresh for each new RTCPeerConnection, so every
+       dial attempt after this one (this session) gets the relay. */
+    escalateToTurn() {
+      if (!TURN_CREDENTIALS_URL || this.turnFetched || this.escalatingTurn || !this.peer) return;
+      this.escalatingTurn = true;
+      fetchIceServers().then((servers) => {
+        this.escalatingTurn = false;
+        if (!this.peer) return;
+        this.turnFetched = true;
+        this.iceFetchedAt = Date.now();
+        this.peer.options.config.iceServers = servers;
       });
     }
 
@@ -151,10 +169,15 @@
       clearInterval(this.dialTimer);
       this.dialTimer = setInterval(() => {
         // Backstop for a dial that goes silent without a 'peer-unavailable'
-        // error. Must stay above worst-case TURN negotiation: a relayed
-        // connection over mobile data (CGNAT) can take 8–10 s to open, and
-        // killing the attempt early guarantees cross-network never connects.
-        if (this.conn && !this.conn.open && Date.now() - this.connStartedAt > 12000) {
+        // error. Before TURN is fetched, 6 s is generous for same-network
+        // negotiation (1–3 s) — a stall past that means direct/STUN can't
+        // reach the peer, so it's the signal to escalate. Once TURN is in
+        // play, allow up to 12 s: a relayed handshake over mobile data
+        // (CGNAT) can take 8–10 s, and killing it early guarantees
+        // cross-network never connects.
+        const stallLimit = this.turnFetched ? 12000 : 6000;
+        if (this.conn && !this.conn.open && Date.now() - this.connStartedAt > stallLimit) {
+          if (!this.turnFetched) this.escalateToTurn();
           try { this.conn.close(); } catch (e) { }
           this.conn = null;
         }
@@ -172,12 +195,13 @@
       if (this.peer && this.peer.disconnected) {
         try { this.peer.reconnect(); } catch (e) { }
       }
-      // Refresh TURN credentials before their 24 h TTL runs out. PeerJS reads
-      // peer.options.config when it builds each new RTCPeerConnection, so
-      // updating it here covers every future dial; the currently open
-      // connection keeps its old allocation until it drops, then the redial
-      // picks up the fresh credentials.
-      if (TURN_CREDENTIALS_URL && this.peer && Date.now() - this.iceFetchedAt > ICE_MAX_AGE) {
+      // Refresh TURN credentials before their 24 h TTL runs out — only if this
+      // session actually escalated to TURN; a connection that never needed a
+      // relay has no credentials to expire. PeerJS reads peer.options.config
+      // when it builds each new RTCPeerConnection, so updating it here covers
+      // every future dial; the currently open connection keeps its old
+      // allocation until it drops, then the redial picks up the fresh one.
+      if (TURN_CREDENTIALS_URL && this.turnFetched && this.peer && Date.now() - this.iceFetchedAt > ICE_MAX_AGE) {
         this.iceFetchedAt = Date.now(); // set first so overlapping ticks don't double-fetch
         fetchIceServers().then((servers) => {
           if (this.peer) this.peer.options.config.iceServers = servers;

@@ -442,7 +442,14 @@
   async function openInApp(record) {
     const file = new File([record.blob], record.name, { type: record.mime });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: record.name }); } catch (e) { /* cancelled */ }
+      try {
+        await navigator.share({ files: [file], title: record.name });
+      } catch (e) {
+        // Si la API de compartición falla por una razón diferente a la cancelación por parte del usuario (por ejemplo, porque el sistema operativo no acepta el tipo de archivo docx), se realiza una descarga local del archivo para asegurar que el usuario pueda abrirlo.
+        if (e.name !== 'AbortError') {
+          downloadRecord(record);
+        }
+      }
     } else {
       downloadRecord(record); // desktop browsers / no Web Share: plain download
     }
@@ -451,9 +458,13 @@
   function downloadRecord(record) {
     const url = URL.createObjectURL(record.blob);
     const a = document.createElement('a');
+    a.style.display = 'none';
     a.href = url;
     a.download = record.name;
+    // En navegadores móviles como Chrome para Android, el elemento anchor debe estar agregado temporalmente al DOM del documento para que el evento click programático inicie con éxito la descarga de un recurso tipo blob.
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   }
 

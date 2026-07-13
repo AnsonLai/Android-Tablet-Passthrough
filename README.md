@@ -14,6 +14,18 @@ The app must be served over **HTTPS** (service workers and PWA install require i
 
 Any static host works (Netlify, Cloudflare Pages, etc.). Document data never touches the host — it only serves the app files. The WebRTC handshake uses the free public PeerJS broker; if it ever feels flaky, self-host [peerjs-server](https://github.com/peers/peerjs-server) and add `{ host, port, path }` to the `new Peer(...)` options in `docs/js/transfer.js`.
 
+### Local LAN testing
+
+To try it on your own network before deploying, run the included threaded dev server and browse to `http://<this-machine-LAN-IP>:8123/` on the tablet:
+
+```
+python serve.py          # serves docs/ on port 8123, all interfaces
+```
+
+Use this instead of `python -m http.server` — the stdlib one is single-threaded and wedges when a browser holds a keep-alive socket, which then makes the service worker serve stale code. `serve.py` is threaded and sends `no-store`, so you always get fresh code. (Note: over plain HTTP the return trip, PWA install, and share sheet are disabled by the browser — see the flag workaround under *Notes & limits*. HTTPS hosting gives you everything.)
+
+**After deploying a code update**, bump `CACHE` in `docs/sw.js` (e.g. `atp-v2` → `atp-v3`) so the service worker replaces its cached copy; otherwise a hard refresh is needed to pick up changes.
+
 ## Setup (one-time)
 
 **Desktop (Windows):**

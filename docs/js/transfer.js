@@ -148,10 +148,14 @@
       }
       if (this.conn) {
         const samePeer = this.conn.peer === conn.peer;
-        if (samePeer && isIncoming && this.conn.open) {
-          // The remote redialed while we still hold an "open" link to it —
-          // it restarted (reload, app killed) and the old link is dead on its
-          // end even though WebRTC hasn't noticed yet. Take the fresh one.
+        // While our pairing screen is open, an inbound connection from a
+        // different device is exactly what we're waiting for. Preempt the
+        // live active-peer connection to take it — otherwise a device that's
+        // already connected can never accept a second device's pairing.
+        const pairingPreempt = this.pairingOpen && isIncoming && !samePeer && !this.isAllowed(conn.peer);
+        if ((samePeer && isIncoming && this.conn.open) || pairingPreempt) {
+          // Same-peer: the remote restarted and its old link is dead even
+          // though WebRTC hasn't noticed. Either way, take the fresh one.
           try { this.conn.close(); } catch (e) {}
         } else {
           // Keep an open connection; on a simultaneous-dial tie with the same

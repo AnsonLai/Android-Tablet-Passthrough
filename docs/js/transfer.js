@@ -17,6 +17,41 @@
   const BUFFER_LOW = 256 * 1024;        // resume below this
   const PONG_STALE = 90 * 1000;         // no traffic for this long = connection is dead
 
+  /* Cross-network connections (tablet on mobile data, PC on home Wi-Fi) need a
+     TURN relay: mobile carriers use CGNAT, which STUN alone cannot traverse.
+     The old anonymous Open Relay (openrelay.metered.ca / "openrelayproject")
+     was shut down, so credentials now come from our Cloudflare Worker, which
+     keeps the TURN API token secret and mints 24 h credentials on demand —
+     setup in cloudflare-worker/README.md. Paste the deployed Worker URL here,
+     e.g. https://atp-turn.YOURNAME.workers.dev
+     Leave empty to run STUN-only (same-network connections still work). */
+  const TURN_CREDENTIALS_URL = 'https://android-tablet-passthrough-github.ansonhwlai.workers.dev';
+
+  const ICE_MAX_AGE = 12 * 60 * 60 * 1000; // refetch well inside the 24 h credential TTL
+
+  const STUN_ONLY = [{ urls: 'stun:stun.l.google.com:19302' }];
+
+  /* The Worker returns a ready-to-use iceServers array with fresh short-lived
+     TURN credentials. Falls back to STUN-only on any failure so a dead TURN
+     provider degrades to same-network operation instead of breaking
+     registration entirely. */
+  async function fetchIceServers() {
+    if (!TURN_CREDENTIALS_URL) {
+      console.warn('[atp] No TURN_CREDENTIALS_URL configured — cross-network connections will not work.');
+      return STUN_ONLY;
+    }
+    try {
+      const res = await fetch(TURN_CREDENTIALS_URL);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const servers = await res.json();
+      if (!Array.isArray(servers) || servers.length === 0) throw new Error('empty iceServers');
+      return servers;
+    } catch (e) {
+      console.error('[atp] TURN credential fetch failed, falling back to STUN only:', e);
+      return STUN_ONLY;
+    }
+  }
+
   class Transfer {
     /* opts: myId, allowedIds (Set, shared & mutated by the app), targetId,
        events: onStatus(state, detail, peerId), onPairRequest(remoteId, accept),
@@ -34,32 +69,17 @@
       this.lastAlive = 0;
     }
 
-    start() {
+    async start() {
       this.onStatus('connecting', 'Registering with signaling server…', null);
+      // Fetched fresh on every (re)start: TURN credentials are short-lived,
+      // so a Peer that lives for days must not reuse old ones.
+      const iceServers = await fetchIceServers();
+      this.iceFetchedAt = Date.now();
       this.peer = new Peer(this.myId, {
         debug: 1,
-        // Configure Open Relay STUN and TURN servers to allow connections across different networks (like mobile data on the tablet and home Wi-Fi on the PC), bypassing Carrier-Grade NAT (CGNAT) and firewalls without compromising security, since WebRTC data channels use end-to-end encryption (DTLS).
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:openrelay.metered.ca:80' },
-            {
-              urls: 'turn:openrelay.metered.ca:80',
-              username: 'openrelayproject',
-              credential: 'openrelayproject'
-            },
-            {
-              urls: 'turn:openrelay.metered.ca:443',
-              username: 'openrelayproject',
-              credential: 'openrelayproject'
-            },
-            {
-              urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-              username: 'openrelayproject',
-              credential: 'openrelayproject'
-            }
-          ]
-        }
+        // TURN relays the traffic but can't read it: WebRTC data channels are
+        // end-to-end encrypted (DTLS).
+        config: { iceServers }
       });
 
       this.peer.on('open', () => {
@@ -80,7 +100,7 @@
         // once, instead of holding it until the stuck-timeout (which was
         // adding 15+ s of dead air to first pairing).
         if (err.type === 'peer-unavailable') {
-          if (this.conn && !this.conn.open) { try { this.conn.close(); } catch (e) {} this.conn = null; }
+          if (this.conn && !this.conn.open) { try { this.conn.close(); } catch (e) { } this.conn = null; }
           return;
         }
         this.onStatus('error', err.type || String(err), null);
@@ -97,7 +117,7 @@
         this.restartTimer = null;
         clearInterval(this.dialTimer);
         this.conn = null;
-        try { this.peer && this.peer.destroy(); } catch (e) {}
+        try { this.peer && this.peer.destroy(); } catch (e) { }
         this.start();
       }, 10000);
     }
@@ -109,7 +129,7 @@
     /* Switch which peer we dial. Closes a live connection to a different peer. */
     setTarget(id) {
       this.targetId = id;
-      if (this.conn && this.conn.peer !== id) { try { this.conn.close(); } catch (e) {} this.conn = null; }
+      if (this.conn && this.conn.peer !== id) { try { this.conn.close(); } catch (e) { } this.conn = null; }
       this.dialNow();
     }
 
@@ -131,10 +151,11 @@
       clearInterval(this.dialTimer);
       this.dialTimer = setInterval(() => {
         // Backstop for a dial that goes silent without a 'peer-unavailable'
-        // error: 6 s is well past LAN/WAN negotiation (1–3 s) but far below
-        // the old 15 s, so a missed first attempt costs seconds, not tens.
-        if (this.conn && !this.conn.open && Date.now() - this.connStartedAt > 6000) {
-          try { this.conn.close(); } catch (e) {}
+        // error. Must stay above worst-case TURN negotiation: a relayed
+        // connection over mobile data (CGNAT) can take 8–10 s to open, and
+        // killing the attempt early guarantees cross-network never connects.
+        if (this.conn && !this.conn.open && Date.now() - this.connStartedAt > 12000) {
+          try { this.conn.close(); } catch (e) { }
           this.conn = null;
         }
         this.dialNow();
@@ -149,12 +170,23 @@
       // which made the desktop unreachable for pairing/transfers.
       if (this.peer && this.peer.destroyed) { this.restartSoon(); return; }
       if (this.peer && this.peer.disconnected) {
-        try { this.peer.reconnect(); } catch (e) {}
+        try { this.peer.reconnect(); } catch (e) { }
+      }
+      // Refresh TURN credentials before their 24 h TTL runs out. PeerJS reads
+      // peer.options.config when it builds each new RTCPeerConnection, so
+      // updating it here covers every future dial; the currently open
+      // connection keeps its old allocation until it drops, then the redial
+      // picks up the fresh credentials.
+      if (TURN_CREDENTIALS_URL && this.peer && Date.now() - this.iceFetchedAt > ICE_MAX_AGE) {
+        this.iceFetchedAt = Date.now(); // set first so overlapping ticks don't double-fetch
+        fetchIceServers().then((servers) => {
+          if (this.peer) this.peer.options.config.iceServers = servers;
+        });
       }
       if (!visible) return;
       if (this.connOpen()) {
         if (Date.now() - this.lastAlive > PONG_STALE) {
-          try { this.conn.close(); } catch (e) {}
+          try { this.conn.close(); } catch (e) { }
           this.conn = null;
           this.dialNow();
           return;
@@ -180,13 +212,13 @@
         if ((samePeer && isIncoming && this.conn.open) || pairingPreempt) {
           // Same-peer: the remote restarted and its old link is dead even
           // though WebRTC hasn't noticed. Either way, take the fresh one.
-          try { this.conn.close(); } catch (e) {}
+          try { this.conn.close(); } catch (e) { }
         } else {
           // Keep an open connection; on a simultaneous-dial tie with the same
           // peer, the lower ID's outgoing attempt wins.
           const keepExisting = this.conn.open || !isIncoming || (samePeer && this.myId < conn.peer);
           if (keepExisting) { conn.close(); return; }
-          try { this.conn.close(); } catch (e) {}
+          try { this.conn.close(); } catch (e) { }
         }
       }
 
@@ -200,9 +232,9 @@
           clearInterval(this.helloTimer);
           this.helloTimer = setInterval(() => {
             if (this.pendingPair !== conn.peer || !conn.open) { clearInterval(this.helloTimer); return; }
-            try { conn.send({ type: 'hello' }); } catch (e) {}
+            try { conn.send({ type: 'hello' }); } catch (e) { }
           }, 4000);
-          try { conn.send({ type: 'hello' }); } catch (e) {}
+          try { conn.send({ type: 'hello' }); } catch (e) { }
         }
         this.onStatus('connected', 'Peer connected', conn.peer);
         this.drain();
@@ -228,12 +260,12 @@
           return;
         case 'hello': {
           if (this.isAllowed(conn.peer)) {
-            try { conn.send({ type: 'paired' }); } catch (e) {} // already trusted — re-confirm silently
+            try { conn.send({ type: 'paired' }); } catch (e) { } // already trusted — re-confirm silently
             return;
           }
           this.onPairRequest(conn.peer, (accepted) => {
             if (accepted) {
-              try { conn.send({ type: 'paired' }); } catch (e) {}
+              try { conn.send({ type: 'paired' }); } catch (e) { }
               this.drain();
             } else {
               conn.close();

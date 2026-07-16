@@ -42,7 +42,8 @@ Use this instead of `python -m http.server` — the stdlib one is single-threade
 
 - **Out:** drag a PDF/DOCX onto the desktop app. It queues (survives reboots) and transfers the moment the tablet app is opened. The tablet pops up an **Open in…** card the instant it arrives — one tap opens the Android share sheet for Word, Acrobat, or your editor.
 - **Back:** in the editing app, tap **Share** and pick **Passthrough**. The file queues and saves automatically on the desktop as soon as it's reachable — into your chosen folder (with a `(1)` suffix on name collisions), or as a regular download if no folder is set.
-- **Multiple devices:** click the **status in the top-right** to open the device list (up to 8 paired devices). Click a device to make it the active target, ✎ to rename, ✕ to forget, or **＋ Add / re-pair device** to pair another computer or tablet. Queued files remember which device they're for.
+- **Clipboard:** type or paste text into the **Clipboard** box and it syncs to the other device as you go. Paste an image (Ctrl+V, or Android's long-press **Paste**) or drop an image file onto the box below it to sync a screenshot the same way — **Copy image** puts it back on the system clipboard, **Download** saves it as a file. Whichever side changed most recently wins when a device reconnects after being offline.
+- **Multiple devices:** click the **status in the top-right** to open the device list (up to 8 paired devices). Click a device to make it the active target, ▲/▼ to reorder the list, ✎ to rename, ✕ to forget, or **＋ Add / re-pair device** to pair another computer or tablet. Queued files remember which device they're for.
 - While the page is visible, the connection is pinged every 30 seconds to keep it alive and reconnect automatically if it drops.
 
 ## Notes & limits

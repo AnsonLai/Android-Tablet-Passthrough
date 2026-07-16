@@ -74,6 +74,7 @@ button {
 
 button:hover { border-color: var(--line-strong); }
 button:active { transform: translateY(1px); }
+button:disabled { opacity: .35; cursor: default; pointer-events: none; }
 button.primary { border-color: var(--accent); background: var(--accent); color: #fff; font-weight: 700; }
 button.primary:hover { border-color: var(--accent-hover); background: var(--accent-hover); }
 button.ghost { border-color: var(--line); background: transparent; color: #555b64; }
@@ -221,15 +222,17 @@ button.big small { color: var(--muted); font-family: Inter, ui-sans-serif, syste
   align-items: start;
 }
 
-#desktop-main > #drop-zone { grid-column: 1 / -1; grid-row: 2; }
-#desktop-main > .folder-row { grid-column: 1 / -1; grid-row: 3; }
-#desktop-main > h2:nth-of-type(1) { grid-column: 1; grid-row: 4; }
-#desktop-main > #outbox-list { grid-column: 1; grid-row: 5; }
-#desktop-main > #outbox-empty { grid-column: 1; grid-row: 6; }
-#desktop-main > h2:nth-of-type(2) { grid-column: 2; grid-row: 4; }
-#desktop-main > #inbox-list { grid-column: 2; grid-row: 5; }
-#desktop-main > #inbox-empty { grid-column: 2; grid-row: 6; }
-#desktop-main > .footer-note { grid-column: 1 / -1; grid-row: 7; }
+#desktop-main > h2:nth-of-type(1) { grid-column: 1 / -1; grid-row: 2; }
+#desktop-main > .clipboard-box { grid-column: 1 / -1; grid-row: 3; }
+#desktop-main > #drop-zone { grid-column: 1 / -1; grid-row: 4; }
+#desktop-main > .folder-row { grid-column: 1 / -1; grid-row: 5; }
+#desktop-main > h2:nth-of-type(2) { grid-column: 1; grid-row: 6; }
+#desktop-main > #outbox-list { grid-column: 1; grid-row: 7; }
+#desktop-main > #outbox-empty { grid-column: 1; grid-row: 8; }
+#desktop-main > h2:nth-of-type(3) { grid-column: 2; grid-row: 6; }
+#desktop-main > #inbox-list { grid-column: 2; grid-row: 7; }
+#desktop-main > #inbox-empty { grid-column: 2; grid-row: 8; }
+#desktop-main > .footer-note { grid-column: 1 / -1; grid-row: 9; }
 
 #drop-zone {
   display: flex;
@@ -301,6 +304,39 @@ button.big small { color: var(--muted); font-family: Inter, ui-sans-serif, syste
 .progress { flex-basis: 100%; height: 4px; overflow: hidden; border-radius: 99px; background: #e5dfd5; }
 .progress-fill { height: 100%; width: 0; border-radius: 99px; background: var(--accent); transition: width .1s; }
 
+.clipboard-box { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+
+.clip-textarea {
+  width: 100%;
+  min-height: 92px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  outline: 0;
+  resize: vertical;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+.clip-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(53, 85, 165, .12); }
+
+.clip-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.clip-sync-status { color: var(--accent); }
+
+.clip-image-zone {
+  padding: 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 2px;
+  background: rgba(255, 253, 248, .62);
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+.clip-image-zone.over { border-color: var(--accent); background: #f0f3fb; box-shadow: 0 0 0 4px rgba(53, 85, 165, .08); }
+.clip-image-zone .muted { margin: 0; text-align: center; }
+
+.clip-image-preview { display: flex; gap: 14px; align-items: center; }
+.clip-image-preview img { max-width: 140px; max-height: 100px; border: 1px solid var(--line); border-radius: 4px; object-fit: contain; background: #fff; }
+.clip-image-info { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 8px; }
+
 .footer-note { margin-top: 38px; }
 a { color: var(--accent); }
 a:hover { color: var(--accent-hover); }
@@ -311,7 +347,7 @@ header { position: relative; }
   top: calc(100% + 8px);
   right: clamp(20px, 5vw, 72px);
   z-index: 20;
-  min-width: 250px;
+  min-width: 280px;
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -375,4 +411,5 @@ button.mini { padding: 4px 7px; font-size: .7rem; }
   .file-actions { width: 100%; }
   .file-actions button { flex: 1; }
   .file-list li { align-items: flex-start; }
+  .clip-image-preview { flex-direction: column; align-items: flex-start; }
 }

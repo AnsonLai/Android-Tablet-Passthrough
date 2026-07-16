@@ -75,6 +75,29 @@
         <h2>Make space for the next pass.</h2>
         <p class="intro-copy">A quiet handoff between the place you send from and the place you mark up.</p>
       </div>
+      <h2>Clipboard</h2>
+      <div class="clipboard-box">
+        <textarea id="clip-text" class="clip-textarea" placeholder="Type or paste text here — it syncs to the other device. Paste an image (Ctrl+V) to sync a screenshot."></textarea>
+        <div class="clip-row">
+          <button id="clip-copy-text" class="ghost mini">Copy text</button>
+          <span id="clip-text-meta" class="muted"></span>
+          <span id="clip-sync-status" class="muted clip-sync-status" hidden></span>
+        </div>
+        <div id="clip-image-zone" class="clip-image-zone">
+          <p id="clip-image-empty" class="muted">Drop an image here, or paste (Ctrl+V) into the box above, to sync it.</p>
+          <div id="clip-image-preview" class="clip-image-preview" hidden>
+            <img id="clip-image-thumb" alt="Synced clipboard image">
+            <div class="clip-image-info">
+              <span id="clip-image-meta" class="muted"></span>
+              <div class="clip-row">
+                <button id="clip-copy-image" class="ghost mini">Copy image</button>
+                <button id="clip-download-image" class="ghost mini">Download</button>
+                <button id="clip-clear-image" class="ghost mini">✕</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
       <div id="drop-zone">
         <p><strong>Drop a PDF or DOCX here</strong> to send it to your tablet</p>
         <label class="ghost file-label">or browse… <input type="file" id="file-input" accept=".pdf,.docx" multiple hidden></label>
@@ -98,6 +121,29 @@
         <p class="eyebrow">Tablet workspace</p>
         <h2>Review, then send it back.</h2>
         <p class="intro-copy">Open a file in Word, Acrobat, or your editor. When you share it back, it returns to the desk.</p>
+      </div>
+      <h2>Clipboard</h2>
+      <div class="clipboard-box">
+        <textarea id="clip-text-t" class="clip-textarea" placeholder="Type or paste text here — it syncs to the other device. Paste an image (Ctrl+V) to sync a screenshot."></textarea>
+        <div class="clip-row">
+          <button id="clip-copy-text-t" class="ghost mini">Copy text</button>
+          <span id="clip-text-meta-t" class="muted"></span>
+          <span id="clip-sync-status-t" class="muted clip-sync-status" hidden></span>
+        </div>
+        <div id="clip-image-zone-t" class="clip-image-zone">
+          <p id="clip-image-empty-t" class="muted">Drop an image here, or paste (Ctrl+V) into the box above, to sync it.</p>
+          <div id="clip-image-preview-t" class="clip-image-preview" hidden>
+            <img id="clip-image-thumb-t" alt="Synced clipboard image">
+            <div class="clip-image-info">
+              <span id="clip-image-meta-t" class="muted"></span>
+              <div class="clip-row">
+                <button id="clip-copy-image-t" class="ghost mini">Copy image</button>
+                <button id="clip-download-image-t" class="ghost mini">Download</button>
+                <button id="clip-clear-image-t" class="ghost mini">✕</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
       <h2>Received documents</h2>
       <ul id="inbox-list-t" class="file-list"></ul>

@@ -17,6 +17,10 @@
     allowedIds: new Set(),
     transfer: null,
     progress: new Map(), // fileId -> {done, total, dir}
+    clip: {               // shared clipboard: one current text value + one current image
+      text: '', textUpdatedAt: 0,
+      imageBlob: null, imageMime: null, imageUpdatedAt: 0,
+    },
   };
 
   const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -75,6 +79,11 @@
     if (state.activePeer && !getPeer(state.activePeer)) state.activePeer = state.peers[0] ? state.peers[0].id : null;
     state.allowedIds = new Set(state.peers.map((p) => p.id));
 
+    const clipText = await db.kvGet('clipText');
+    if (clipText) { state.clip.text = clipText.text; state.clip.textUpdatedAt = clipText.updatedAt; }
+    const clipImage = await db.kvGet('clipImage');
+    if (clipImage) { state.clip.imageBlob = clipImage.blob; state.clip.imageMime = clipImage.mime; state.clip.imageUpdatedAt = clipImage.updatedAt; }
+
     // Arriving via a scanned pairing QR (…#pair=<peer-id>) makes this device the tablet.
     const pairMatch = location.hash.match(/^#pair=(atp-[a-z0-9]+)$/);
     if (pairMatch) {
@@ -107,6 +116,7 @@
     show(state.role === 'desktop' ? 'desktop-main' : 'tablet-main');
     updateStatusText();
     refreshLists();
+    renderClipboard();
   }
 
   /* ---------- status header ---------- */
@@ -153,6 +163,36 @@
         return all.filter((r) => !r.target || r.target === forPeerId);
       },
       persistIncoming: (record) => db.add('inbox', record),
+      onConnected: () => {
+        // Each side reports its own timestamps, then independently pushes
+        // whichever of its own fields turns out to be newer — no separate
+        // pull request needed, and reconnects don't resend unchanged data.
+        state.transfer.sendClipMeta({ textUpdatedAt: state.clip.textUpdatedAt, imageUpdatedAt: state.clip.imageUpdatedAt });
+      },
+      onClipMeta: (meta) => {
+        if (state.clip.textUpdatedAt > (meta.textUpdatedAt || 0)) {
+          state.transfer.sendClipText(state.clip.text, state.clip.textUpdatedAt);
+        }
+        if (state.clip.imageBlob && state.clip.imageUpdatedAt > (meta.imageUpdatedAt || 0)) {
+          state.transfer.sendClipImage(uuid(), state.clip.imageBlob, state.clip.imageMime, state.clip.imageUpdatedAt);
+        }
+      },
+      onClipText: async (text, updatedAt) => {
+        if (updatedAt <= state.clip.textUpdatedAt) return;
+        state.clip.text = text;
+        state.clip.textUpdatedAt = updatedAt;
+        await db.kvSet('clipText', { text, updatedAt });
+        renderClipboard();
+      },
+      onClipImage: async (blob, mime, updatedAt) => {
+        if (updatedAt <= state.clip.imageUpdatedAt) return;
+        state.clip.imageBlob = blob;
+        state.clip.imageMime = mime;
+        state.clip.imageUpdatedAt = updatedAt;
+        await db.kvSet('clipImage', { blob, mime, updatedAt });
+        renderClipboard();
+      },
+      onClipProgress: (dir, done, total) => renderClipProgress(dir, done, total),
     });
     return transfer;
   }
@@ -267,6 +307,15 @@
     refreshLists();
   }
 
+  async function movePeer(id, delta) {
+    const from = state.peers.findIndex((p) => p.id === id);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= state.peers.length) return;
+    [state.peers[from], state.peers[to]] = [state.peers[to], state.peers[from]];
+    await savePeers();
+    renderPeerMenu();
+  }
+
   /* ---------- peer menu (click the status in the header) ---------- */
 
   function closePeerMenu() { $('#peer-menu').hidden = true; }
@@ -276,7 +325,7 @@
     if (menu.hidden) return;
     const list = $('#peer-menu-list');
     list.innerHTML = '';
-    for (const peer of state.peers) {
+    state.peers.forEach((peer, i) => {
       const li = document.createElement('li');
       li.className = 'peer-row' + (peer.id === state.activePeer ? ' active' : '');
 
@@ -288,6 +337,20 @@
       name.textContent = peer.label + (peer.id === state.activePeer ? ' ✓' : '');
       name.title = peer.id;
       name.addEventListener('click', () => { setActivePeer(peer.id); closePeerMenu(); });
+
+      const up = document.createElement('button');
+      up.className = 'ghost mini';
+      up.textContent = '▲';
+      up.title = 'Move up';
+      up.disabled = i === 0;
+      up.addEventListener('click', () => movePeer(peer.id, -1));
+
+      const down = document.createElement('button');
+      down.className = 'ghost mini';
+      down.textContent = '▼';
+      down.title = 'Move down';
+      down.disabled = i === state.peers.length - 1;
+      down.addEventListener('click', () => movePeer(peer.id, 1));
 
       const rename = document.createElement('button');
       rename.className = 'ghost mini';
@@ -301,9 +364,9 @@
       forget.title = 'Forget this device';
       forget.addEventListener('click', () => forgetPeer(peer.id));
 
-      li.append(dot, name, rename, forget);
+      li.append(dot, name, up, down, rename, forget);
       list.append(li);
-    }
+    });
     const add = $('#add-device');
     add.disabled = state.peers.length >= MAX_PEERS;
     add.textContent = state.peers.length >= MAX_PEERS ? `Limit of ${MAX_PEERS} devices reached` : '＋ Add / re-pair device';
@@ -349,6 +412,8 @@
     } else {
       $('#overlay-close').addEventListener('click', () => { $('#share-overlay').hidden = true; });
     }
+
+    wireClipboardUi();
   }
 
   /* ---------- role chooser ---------- */
@@ -490,6 +555,168 @@
       refreshLists();
     };
     $('#share-overlay').hidden = false;
+  }
+
+  /* ---------- shared clipboard ---------- */
+
+  function clipSuffix() { return state.role === 'tablet' ? '-t' : ''; }
+
+  function wireClipboardUi() {
+    const suffix = clipSuffix();
+    const textArea = $('#clip-text' + suffix);
+    const zone = $('#clip-image-zone' + suffix);
+
+    let debounceTimer = null;
+    textArea.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => commitClipText(textArea.value), 400);
+    });
+    // A screenshot copied elsewhere (Snipping Tool, long-press "Paste" on
+    // Android) arrives as a clipboard file item even when pasted into a
+    // plain textarea — intercept it before it turns into broken alt text.
+    textArea.addEventListener('paste', handleClipImagePaste);
+
+    $('#clip-copy-text' + suffix).addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(state.clip.text); }
+      catch (e) { alert('Could not copy text: ' + e.message); }
+    });
+
+    zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('over'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+    zone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      zone.classList.remove('over');
+      const file = [...e.dataTransfer.files].find((f) => f.type.startsWith('image/'));
+      if (file) commitClipImage(file);
+    });
+
+    $('#clip-copy-image' + suffix).addEventListener('click', copyClipImage);
+    $('#clip-download-image' + suffix).addEventListener('click', () => {
+      if (state.clip.imageBlob) downloadRecord({ blob: state.clip.imageBlob, name: 'clipboard' + extFromMime(state.clip.imageMime) });
+    });
+    $('#clip-clear-image' + suffix).addEventListener('click', clearClipImage);
+  }
+
+  function handleClipImagePaste(e) {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) commitClipImage(file);
+        return;
+      }
+    }
+  }
+
+  async function commitClipText(text) {
+    if (text === state.clip.text) return;
+    state.clip.text = text;
+    state.clip.textUpdatedAt = Date.now();
+    await db.kvSet('clipText', { text: state.clip.text, updatedAt: state.clip.textUpdatedAt });
+    state.transfer.sendClipText(state.clip.text, state.clip.textUpdatedAt);
+    renderClipboard();
+  }
+
+  async function commitClipImage(file) {
+    const mime = file.type || 'image/png';
+    const updatedAt = Date.now();
+    state.clip.imageBlob = file;
+    state.clip.imageMime = mime;
+    state.clip.imageUpdatedAt = updatedAt;
+    await db.kvSet('clipImage', { blob: file, mime, updatedAt });
+    renderClipboard();
+    state.transfer.sendClipImage(uuid(), file, mime, updatedAt);
+  }
+
+  async function clearClipImage() {
+    // Local dismiss only (like the ✕ on an inbox item) — doesn't tell the
+    // peer to forget its copy, and a later reconnect won't resurrect this
+    // one since its stored updatedAt goes with it.
+    state.clip.imageBlob = null;
+    state.clip.imageMime = null;
+    state.clip.imageUpdatedAt = 0;
+    await db.kvDelete('clipImage');
+    renderClipboard();
+  }
+
+  async function copyClipImage() {
+    if (!state.clip.imageBlob) return;
+    try {
+      if (!navigator.clipboard || !window.ClipboardItem) throw new Error('clipboard image copy unsupported in this browser');
+      let blob = state.clip.imageBlob;
+      let mime = state.clip.imageMime;
+      if (mime !== 'image/png') { blob = await convertToPng(blob); mime = 'image/png'; } // most browsers only accept PNG via the Clipboard API
+      await navigator.clipboard.write([new ClipboardItem({ [mime]: blob })]);
+    } catch (e) {
+      alert('Could not copy image to the system clipboard (' + e.message + '). Use Download instead.');
+    }
+  }
+
+  function convertToPng(blob) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        canvas.getContext('2d').drawImage(img, 0, 0);
+        canvas.toBlob((pngBlob) => {
+          URL.revokeObjectURL(url);
+          pngBlob ? resolve(pngBlob) : reject(new Error('PNG conversion failed'));
+        }, 'image/png');
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('image decode failed')); };
+      img.src = url;
+    });
+  }
+
+  function extFromMime(mime) {
+    const map = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'image/bmp': '.bmp', 'image/svg+xml': '.svg' };
+    return map[mime] || '.png';
+  }
+
+  function fmtAgo(ts) {
+    if (!ts) return '';
+    const s = Math.round((Date.now() - ts) / 1000);
+    if (s < 5) return 'synced just now';
+    if (s < 60) return `synced ${s}s ago`;
+    const m = Math.round(s / 60);
+    if (m < 60) return `synced ${m}m ago`;
+    return `synced ${Math.round(m / 60)}h ago`;
+  }
+
+  function renderClipboard() {
+    const suffix = clipSuffix();
+    const textArea = $('#clip-text' + suffix);
+    if (document.activeElement !== textArea) textArea.value = state.clip.text; // don't clobber active typing
+    $('#clip-text-meta' + suffix).textContent = fmtAgo(state.clip.textUpdatedAt);
+
+    const empty = $('#clip-image-empty' + suffix);
+    const preview = $('#clip-image-preview' + suffix);
+    if (state.clip.imageBlob) {
+      empty.hidden = true;
+      preview.hidden = false;
+      const url = URL.createObjectURL(state.clip.imageBlob);
+      const thumb = $('#clip-image-thumb' + suffix);
+      thumb.onload = () => URL.revokeObjectURL(url);
+      thumb.src = url;
+      $('#clip-image-meta' + suffix).textContent = fmtSize(state.clip.imageBlob.size) + ' • ' + fmtAgo(state.clip.imageUpdatedAt);
+    } else {
+      empty.hidden = false;
+      preview.hidden = true;
+    }
+  }
+
+  function renderClipProgress(dir, done, total) {
+    const el = $('#clip-sync-status' + clipSuffix());
+    if (!el) return;
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    el.hidden = false;
+    el.textContent = (dir === 'sending' ? 'Sending image… ' : 'Receiving image… ') + pct + '%';
+    if (done >= total) setTimeout(() => { el.hidden = true; el.textContent = ''; }, 800);
   }
 
   /* ---------- receiving ---------- */

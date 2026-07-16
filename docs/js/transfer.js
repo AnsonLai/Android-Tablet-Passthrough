@@ -6,9 +6,14 @@
      {type:'paired'}                               — confirmation that pairing succeeded
      {type:'ping'} / {type:'pong'}                 — 30 s keepalive while the page is visible
      {type:'file-header', id, name, mime, size}    — announces an incoming file
-     {type:'chunk', id, data:ArrayBuffer}          — 64 KB payload chunk
+     {type:'chunk', id, data:ArrayBuffer}          — 64 KB payload chunk (shared by files & clip images)
      {type:'file-complete', id}                    — sender finished; receiver verifies byte count
-     {type:'ack', id}                              — receiver persisted the file; sender may delete it */
+     {type:'ack', id}                              — receiver persisted the file; sender may delete it
+     {type:'clip-meta', textUpdatedAt, imageUpdatedAt} — sent on connect; each side pushes whichever
+                                                          of its own fields is newer than what's reported
+     {type:'clip-text', text, updatedAt}           — shared-clipboard text, applied if newer than local
+     {type:'clip-image-header', id, mime, size, updatedAt} — announces a shared-clipboard image
+     {type:'clip-image-complete', id}              — image finished; applied if newer than local */
 (function (scope) {
   'use strict';
 
@@ -55,8 +60,10 @@
   class Transfer {
     /* opts: myId, allowedIds (Set, shared & mutated by the app), targetId,
        events: onStatus(state, detail, peerId), onPairRequest(remoteId, accept),
-       onPaired(remoteId), onFileReceived(record), onProgress(id, done, total, dir),
-       onAcked(id), getOutbox(forPeerId) -> Promise<records>, persistIncoming(record) -> Promise */
+       onPaired(remoteId), onConnected(peerId), onFileReceived(record), onProgress(id, done, total, dir),
+       onAcked(id), getOutbox(forPeerId) -> Promise<records>, persistIncoming(record) -> Promise,
+       onClipMeta(msg), onClipText(text, updatedAt, fromPeer), onClipImage(blob, mime, updatedAt, fromPeer),
+       onClipProgress(dir, done, total) */
     constructor(opts) {
       Object.assign(this, opts);
       this.peer = null;
@@ -262,6 +269,7 @@
         }
         this.onStatus('connected', 'Peer connected', conn.peer);
         this.drain();
+        this.onConnected && this.onConnected(conn.peer);
       });
       conn.on('data', (msg) => this.handleMessage(conn, msg));
       conn.on('close', () => {
@@ -304,6 +312,7 @@
           return;
         case 'file-header':
           this.incoming.set(msg.id, {
+            kind: 'file',
             meta: { id: msg.id, name: msg.name, mime: msg.mime, size: msg.size },
             chunks: [],
             received: 0,
@@ -315,7 +324,8 @@
           const data = msg.data instanceof ArrayBuffer ? msg.data : msg.data.buffer;
           entry.chunks.push(data);
           entry.received += data.byteLength;
-          this.onProgress && this.onProgress(msg.id, entry.received, entry.meta.size, 'receiving');
+          if (entry.kind === 'clip-image') this.onClipProgress && this.onClipProgress('receiving', entry.received, entry.meta.size);
+          else this.onProgress && this.onProgress(msg.id, entry.received, entry.meta.size, 'receiving');
           return;
         }
         case 'file-complete': {
@@ -341,6 +351,29 @@
         case 'ack':
           this.onAcked(msg.id);
           return;
+        case 'clip-meta':
+          this.onClipMeta && this.onClipMeta(msg);
+          return;
+        case 'clip-text':
+          this.onClipText && this.onClipText(msg.text, msg.updatedAt, conn.peer);
+          return;
+        case 'clip-image-header':
+          this.incoming.set(msg.id, {
+            kind: 'clip-image',
+            meta: { id: msg.id, mime: msg.mime, size: msg.size, updatedAt: msg.updatedAt },
+            chunks: [],
+            received: 0,
+          });
+          return;
+        case 'clip-image-complete': {
+          const entry = this.incoming.get(msg.id);
+          if (!entry) return;
+          this.incoming.delete(msg.id);
+          if (entry.received !== entry.meta.size) return; // dropped mid-transfer; peer's next connect will retry
+          const blob = new Blob(entry.chunks, { type: entry.meta.mime });
+          this.onClipImage && this.onClipImage(blob, entry.meta.mime, entry.meta.updatedAt, conn.peer);
+          return;
+        }
       }
     }
 
@@ -362,14 +395,44 @@
     async sendFile(record) {
       const conn = this.conn;
       conn.send({ type: 'file-header', id: record.id, name: record.name, mime: record.mime, size: record.size });
-      const buffer = await record.blob.arrayBuffer();
+      const sent = await this.sendChunks(conn, record.id, record.blob,
+        (done, total) => this.onProgress && this.onProgress(record.id, done, total, 'sending'));
+      if (sent) conn.send({ type: 'file-complete', id: record.id });
+    }
+
+    /* Shared by sendFile and sendClipImage: streams a blob as 'chunk' messages,
+       throttled via bufferedAmount. Returns whether the connection was still
+       open at the end (i.e. whether the caller should send its own *-complete). */
+    async sendChunks(conn, id, blob, onChunkProgress) {
+      const buffer = await blob.arrayBuffer();
       for (let offset = 0; offset < buffer.byteLength; offset += CHUNK_SIZE) {
-        if (!conn.open) return;
-        conn.send({ type: 'chunk', id: record.id, data: buffer.slice(offset, offset + CHUNK_SIZE) });
-        this.onProgress && this.onProgress(record.id, Math.min(offset + CHUNK_SIZE, buffer.byteLength), buffer.byteLength, 'sending');
+        if (!conn.open) return false;
+        conn.send({ type: 'chunk', id, data: buffer.slice(offset, offset + CHUNK_SIZE) });
+        if (onChunkProgress) onChunkProgress(Math.min(offset + CHUNK_SIZE, buffer.byteLength), buffer.byteLength);
         await this.waitForBuffer(conn);
       }
-      if (conn.open) conn.send({ type: 'file-complete', id: record.id });
+      return conn.open;
+    }
+
+    /* ---------- shared clipboard ---------- */
+
+    sendClipMeta(meta) {
+      if (!this.connOpen()) return;
+      this.conn.send({ type: 'clip-meta', ...meta });
+    }
+
+    sendClipText(text, updatedAt) {
+      if (!this.connOpen()) return;
+      this.conn.send({ type: 'clip-text', text, updatedAt });
+    }
+
+    async sendClipImage(id, blob, mime, updatedAt) {
+      if (!this.connOpen()) return;
+      const conn = this.conn;
+      conn.send({ type: 'clip-image-header', id, mime, size: blob.size, updatedAt });
+      const sent = await this.sendChunks(conn, id, blob,
+        (done, total) => this.onClipProgress && this.onClipProgress('sending', done, total));
+      if (sent) conn.send({ type: 'clip-image-complete', id });
     }
 
     waitForBuffer(conn) {

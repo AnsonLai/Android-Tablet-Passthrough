@@ -108,6 +108,7 @@
   function show(id) {
     for (const panel of document.querySelectorAll('main > section')) panel.hidden = panel.id !== id;
     closePeerMenu();
+    updateClipVisibility();
   }
 
   function backToMain() {
@@ -182,7 +183,7 @@
         state.clip.text = text;
         state.clip.textUpdatedAt = updatedAt;
         await db.kvSet('clipText', { text, updatedAt });
-        renderClipboard();
+        openClipPanel(); // surface what just arrived
       },
       onClipImage: async (blob, mime, updatedAt) => {
         if (updatedAt <= state.clip.imageUpdatedAt) return;
@@ -190,7 +191,7 @@
         state.clip.imageMime = mime;
         state.clip.imageUpdatedAt = updatedAt;
         await db.kvSet('clipImage', { blob, mime, updatedAt });
-        renderClipboard();
+        openClipPanel(); // surface what just arrived
       },
       onClipProgress: (dir, done, total) => renderClipProgress(dir, done, total),
     });
@@ -440,8 +441,14 @@
   /* ---------- desktop: sending & saving ---------- */
 
   async function enqueueFiles(fileList) {
+    // A dropped image is clipboard material, not a document to queue.
+    const files = [...fileList];
+    const image = files.find((f) => f.type.startsWith('image/'));
+    if (image) { await commitClipImage(image); openClipPanel(); }
+    const docs = files.filter((f) => !f.type.startsWith('image/'));
+    if (docs.length === 0) return;
     if (!state.activePeer) { alert('Pair a device first.'); return; }
-    for (const file of fileList) {
+    for (const file of docs) {
       const mime = file.type || (file.name.toLowerCase().endsWith('.docx') ? DOCX_MIME : 'application/pdf');
       await db.add('outbox', {
         id: uuid(),
@@ -559,55 +566,87 @@
 
   /* ---------- shared clipboard ---------- */
 
-  function clipSuffix() { return state.role === 'tablet' ? '-t' : ''; }
+  let clipOpen = false;
+
+  function inMainView() {
+    const d = $('#desktop-main'), t = $('#tablet-main');
+    return (d && !d.hidden) || (t && !t.hidden);
+  }
+
+  // The clipboard floats bottom-right: collapsed to the 📋 button until the
+  // user opens it, pastes anywhere, or the other device syncs something over.
+  function updateClipVisibility() {
+    const ok = inMainView();
+    $('#clip-panel').hidden = !ok || !clipOpen;
+    $('#clip-fab').hidden = !ok || clipOpen;
+  }
+
+  function openClipPanel() {
+    clipOpen = true;
+    renderClipboard();
+    updateClipVisibility();
+  }
+
+  function closeClipPanel() {
+    clipOpen = false;
+    updateClipVisibility();
+  }
 
   function wireClipboardUi() {
-    const suffix = clipSuffix();
-    const textArea = $('#clip-text' + suffix);
-    const zone = $('#clip-image-zone' + suffix);
+    $('#clip-fab').addEventListener('click', openClipPanel);
+    $('#clip-close').addEventListener('click', closeClipPanel);
 
+    const textArea = $('#clip-text');
     let debounceTimer = null;
     textArea.addEventListener('input', () => {
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => commitClipText(textArea.value), 400);
     });
-    // A screenshot copied elsewhere (Snipping Tool, long-press "Paste" on
-    // Android) arrives as a clipboard file item even when pasted into a
-    // plain textarea — intercept it before it turns into broken alt text.
-    textArea.addEventListener('paste', handleClipImagePaste);
 
-    $('#clip-copy-text' + suffix).addEventListener('click', async () => {
+    $('#clip-copy-text').addEventListener('click', async () => {
       try { await navigator.clipboard.writeText(state.clip.text); }
       catch (e) { alert('Could not copy text: ' + e.message); }
     });
 
-    zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('over'); });
-    zone.addEventListener('dragleave', () => zone.classList.remove('over'));
-    zone.addEventListener('drop', (e) => {
+    $('#clip-copy-image').addEventListener('click', copyClipImage);
+    $('#clip-download-image').addEventListener('click', () => {
+      if (state.clip.imageBlob) downloadRecord({ blob: state.clip.imageBlob, name: 'clipboard' + extFromMime(state.clip.imageMime) });
+    });
+    $('#clip-clear-image').addEventListener('click', clearClipImage);
+
+    // Paste anywhere in the app — no need to find or open the clipboard first.
+    document.addEventListener('paste', handleGlobalPaste);
+
+    // Images can also be dropped onto the open panel.
+    const panel = $('#clip-panel');
+    panel.addEventListener('dragover', (e) => e.preventDefault());
+    panel.addEventListener('drop', (e) => {
       e.preventDefault();
-      zone.classList.remove('over');
       const file = [...e.dataTransfer.files].find((f) => f.type.startsWith('image/'));
       if (file) commitClipImage(file);
     });
-
-    $('#clip-copy-image' + suffix).addEventListener('click', copyClipImage);
-    $('#clip-download-image' + suffix).addEventListener('click', () => {
-      if (state.clip.imageBlob) downloadRecord({ blob: state.clip.imageBlob, name: 'clipboard' + extFromMime(state.clip.imageMime) });
-    });
-    $('#clip-clear-image' + suffix).addEventListener('click', clearClipImage);
   }
 
-  function handleClipImagePaste(e) {
+  function handleGlobalPaste(e) {
+    if (!inMainView()) return;
+    const target = e.target;
     const items = e.clipboardData && e.clipboardData.items;
-    if (!items) return;
-    for (const item of items) {
-      if (item.kind === 'file' && item.type.startsWith('image/')) {
-        e.preventDefault();
-        const file = item.getAsFile();
-        if (file) commitClipImage(file);
-        return;
-      }
+    // A pasted screenshot (Snipping Tool, Android long-press Paste) arrives as
+    // a clipboard file item — capture it wherever the paste lands.
+    const imageItem = items && [...items].find((i) => i.kind === 'file' && i.type.startsWith('image/'));
+    if (imageItem) {
+      e.preventDefault();
+      const file = imageItem.getAsFile();
+      if (file) { commitClipImage(file); openClipPanel(); }
+      return;
     }
+    if (target instanceof Element && target.closest('input, textarea')) {
+      return; // text pasted into a real field (incl. the clip textarea, whose input handler syncs it) stays there
+    }
+    const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+    if (!text) return;
+    commitClipText(text);
+    openClipPanel();
   }
 
   async function commitClipText(text) {
@@ -689,30 +728,25 @@
   }
 
   function renderClipboard() {
-    const suffix = clipSuffix();
-    const textArea = $('#clip-text' + suffix);
+    const textArea = $('#clip-text');
     if (document.activeElement !== textArea) textArea.value = state.clip.text; // don't clobber active typing
-    $('#clip-text-meta' + suffix).textContent = fmtAgo(state.clip.textUpdatedAt);
+    $('#clip-text-meta').textContent = fmtAgo(state.clip.textUpdatedAt);
 
-    const empty = $('#clip-image-empty' + suffix);
-    const preview = $('#clip-image-preview' + suffix);
+    const preview = $('#clip-image-preview');
     if (state.clip.imageBlob) {
-      empty.hidden = true;
       preview.hidden = false;
       const url = URL.createObjectURL(state.clip.imageBlob);
-      const thumb = $('#clip-image-thumb' + suffix);
+      const thumb = $('#clip-image-thumb');
       thumb.onload = () => URL.revokeObjectURL(url);
       thumb.src = url;
-      $('#clip-image-meta' + suffix).textContent = fmtSize(state.clip.imageBlob.size) + ' • ' + fmtAgo(state.clip.imageUpdatedAt);
+      $('#clip-image-meta').textContent = fmtSize(state.clip.imageBlob.size) + ' • ' + fmtAgo(state.clip.imageUpdatedAt);
     } else {
-      empty.hidden = false;
       preview.hidden = true;
     }
   }
 
   function renderClipProgress(dir, done, total) {
-    const el = $('#clip-sync-status' + clipSuffix());
-    if (!el) return;
+    const el = $('#clip-sync-status');
     const pct = total ? Math.round((done / total) * 100) : 0;
     el.hidden = false;
     el.textContent = (dir === 'sending' ? 'Sending image… ' : 'Receiving image… ') + pct + '%';

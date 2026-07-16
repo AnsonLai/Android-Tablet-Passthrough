@@ -3,7 +3,7 @@
    so a marked-up document is never lost even if the app closes. */
 importScripts('js/db.js');
 
-const CACHE = 'atp-v6';
+const CACHE = 'atp-v7';
 const SHELL = [
   './',
   'index.html',
